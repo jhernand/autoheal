@@ -21,6 +21,7 @@ package config
 import (
 	"fmt"
 	"io/ioutil"
+	"time"
 
 	"github.com/ghodss/yaml"
 	core "k8s.io/api/core/v1"
@@ -82,9 +83,12 @@ func (l *Loader) Files(files []string) *Loader {
 // Load loads the configuration files and returns the resulting configuration object.
 //
 func (l *Loader) Load() (config *Config, err error) {
-	// Create an empty configuration:
+	// Create an default configuration:
 	l.config = &Config{
 		awx: &AWXConfig{},
+		throttling: &ThrottlingConfig{
+			interval: 1 * time.Hour,
+		},
 	}
 
 	// Merge the contents of the files into the empty configuration:
@@ -122,6 +126,12 @@ func (l *Loader) mergeFile(file string) error {
 	// Merge the configuration data from the file with the existing configuration:
 	if decoded.AWX != nil {
 		err = l.mergeAWX(decoded.AWX)
+		if err != nil {
+			return err
+		}
+	}
+	if decoded.Throttling != nil {
+		err = l.mergeThrottling(decoded.Throttling)
 		if err != nil {
 			return err
 		}
@@ -166,6 +176,13 @@ func (l *Loader) mergeAWX(decoded *data.AWXConfig) error {
 		l.config.awx.project = decoded.Project
 	}
 
+	return nil
+}
+
+func (l *Loader) mergeThrottling(decoded *data.ThrottlingConfig) error {
+	if decoded.Interval != nil {
+		l.config.throttling.interval = *decoded.Interval
+	}
 	return nil
 }
 
