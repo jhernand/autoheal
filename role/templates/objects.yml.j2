@@ -1,0 +1,248 @@
+{#
+Copyright (c) 2018 Red Hat, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+#}
+
+apiVersion: v1
+kind: List
+items:
+
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: {{ openshift_autoheal_namespace }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+
+- apiVersion: v1
+  kind: Role
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+  rules:
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    resourceNames:
+    - {{ openshift_autoheal_name }}-awx-credentials
+    - {{ openshift_autoheal_name }}-awx-tls
+    verbs:
+    - get
+
+- apiVersion: v1
+  kind: RoleBinding
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+  roleRef:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+  subjects:
+  - kind: ServiceAccount
+    name: {{ openshift_autoheal_name }}
+  userNames:
+  - system:serviceaccount:{{ openshift_autoheal_namespace }}:{{ openshift_autoheal_name }}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}-awx-credentials
+    labels:
+      app: {{ openshift_autoheal_name }}
+  data:
+    username: {{ openshift_autoheal_awx_user | b64encode }}
+    password: {{ openshift_autoheal_awx_password | b64encode }}
+
+- apiVersion: rbac.authorization.k8s.io/v1beta1
+  kind: ClusterRoleBinding
+  metadata:
+    name: {{ openshift_autoheal_name }}-auth-delegator
+    labels:
+      app: {{ openshift_autoheal_name }}
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: system:auth-delegator
+  subjects:
+  - kind: ServiceAccount
+    name: {{ openshift_autoheal_name }}
+    namespace: {{ openshift_autoheal_namespace }}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}-awx-tls
+    labels:
+      app: {{ openshift_autoheal_name }}
+  data:
+    ca.crt: {{ openshift_autoheal_awx_ca | b64encode }}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}-proxy-cookie
+    labels:
+      app: {{ openshift_autoheal_name }}
+  data:
+    session_secret: {{ cookie.stdout }}
+
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: {{ openshift_autoheal_name }}-access
+  rules:
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    resourceNames:
+    - {{ openshift_autoheal_name }}-access-key
+    verbs:
+    - get
+
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: alertmanager-{{ openshift_autoheal_name }}-access
+    labels:
+      app: {{ openshift_autoheal_name }}
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: {{ openshift_autoheal_name }}-access
+  subjects:
+  - kind: ServiceAccount
+    namespace: openshift-monitoring
+    name: alertmanager-main
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}-config
+    labels:
+      app: {{ openshift_autoheal_name }}
+  data:
+    autoheal.yml: |-
+      awx:
+        address: {{ openshift_autoheal_awx_address }}
+        proxy: {{ openshift_autoheal_awx_proxy }}
+        credentialsRef:
+          namespace: {{ openshift_autoheal_namespace }}
+          name: {{ openshift_autoheal_name }}-awx-credentials
+        tlsRef:
+          namespace: {{ openshift_autoheal_namespace }}
+          name: {{ openshift_autoheal_name }}-awx-tls
+        project: {{ openshift_autoheal_awx_project }}
+
+- apiVersion: apps/v1beta1
+  kind: Deployment
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+  spec:
+    selector:
+      matchLabels:
+        app: {{ openshift_autoheal_name }}
+    replicas: 1
+    template:
+      metadata:
+        labels:
+          app: {{ openshift_autoheal_name }}
+      spec:
+        serviceAccountName: {{ openshift_autoheal_name }}
+        volumes:
+        - name: config
+          configMap:
+            name: {{ openshift_autoheal_name }}-config
+        - name: {{ openshift_autoheal_name }}-proxy-tls
+          secret:
+            secretName: {{ openshift_autoheal_name }}-proxy-tls
+        - name: {{ openshift_autoheal_name }}-proxy-cookie
+          secret:
+            secretName: {{ openshift_autoheal_name }}-proxy-cookie
+        containers:
+        - name: oauth-proxy
+          image: openshift/oauth-proxy:v1.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: public
+          args:
+          - --https-address=:8443
+          - --provider=openshift
+          - --openshift-service-account={{ openshift_autoheal_name }}
+          - --upstream=http://localhost:9099
+          - --tls-cert=/etc/tls/private/tls.crt
+          - -email-domain=*
+          - '-openshift-sar={"resource": "secrets", "verb": "get", "name": "{{ openshift_autoheal_name }}-access-key", "namespace": "{{ openshift_autoheal_namespace }}" }'
+          - '-openshift-delegate-urls={"/": {"resource": "secrets", "verb": "get", "name": "{{ openshift_autoheal_name }}-access-key", "namespace": "{{ openshift_autoheal_namespace }}" } }'
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: {{ openshift_autoheal_name }}-proxy-tls
+          - mountPath: /etc/proxy/secrets
+            name: {{ openshift_autoheal_name }}-proxy-cookie
+        - name: service
+          image: {{ openshift_autoheal_image }}
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+          - name: config
+            mountPath: /etc/autoheal
+          command:
+          - /usr/bin/autoheal
+          args:
+          - server
+          - --config-file=/etc/autoheal/autoheal.yml
+          - --logtostderr
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    namespace: {{ openshift_autoheal_namespace }}
+    name: {{ openshift_autoheal_name }}
+    labels:
+      app: {{ openshift_autoheal_name }}
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: {{ openshift_autoheal_name }}-proxy-tls
+  spec:
+    selector:
+      app: {{ openshift_autoheal_name }}
+    ports:
+    - name: autoheal
+      port: 443
+      targetPort: 8443

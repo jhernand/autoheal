@@ -355,10 +355,16 @@ $ curl --data @examples/node-down-alert.json http://localhost:9099/alerts
 
 ## Installing
 
-To install the service to an _OpenShift_ cluster use the template contained in
-the `template.yml` file. This template requires at the very minimum the address
-and the credentials to connect to the AWX or Ansible Tower server. See the
-`template.sh` script for an example of how to use it.
+To install the service to an _OpenShift_ cluster use the Ansible role contained
+in the `role` directory. This role requires at the very minimum the address and
+the credentials to connect to the AWX or Ansible Tower server, which should go in the
+`inventory.ini` file. So add your settings to that file:
+
+```
+
+
+. See the
+`install.sh` script for an example of how to use it.
 
 ## Development
 
